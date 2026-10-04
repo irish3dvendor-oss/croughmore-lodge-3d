@@ -224,7 +224,7 @@ const COARSE = matchMedia('(pointer: coarse)').matches;
 if (COARSE) document.documentElement.classList.add('touch');
 const MOBILE = COARSE || Math.min(screen.width, screen.height) < 700;
 const Q = MOBILE ? 'lo' : 'hi';
-const VER = '?v=5.1';           // bump on every republish so browsers never mix old and new assets
+const VER = '?v=5.2';           // bump on every republish so browsers never mix old and new assets
 const $ = (s) => document.querySelector(s);
 const statusEl = $('#status'), barEl = $('#bar i');
 
@@ -310,6 +310,10 @@ function loadTex(url, { srgb = true, flip = false, repeat = false } = {}) {
 // photo-scanned textures used in Blender) keep fabrics, wood and plaster crisp at arm's length.
 const GROUPS = ['EXT', 'SITEN', 'GF', 'BATH', 'FF', 'SITEF', 'HOUSE'];
 const INTERIOR = new Set(['GF', 'FF', 'BATH']);
+// look matched to the listing photos (4 Oct 2026): rooms read brighter and a touch cooler than the raw bake
+const INT_GAIN = 1.5;                                 // indoors, everything is lifted by this as your eyes adjust
+const INT_WB = [0.96, 1.0, 1.05];                     // white balance for the interior lightmaps (less beige)
+const FLOOR_REFL = 2.0;                               // glossy porcelain floor tiles: stronger reflections
 const groupMats = Object.fromEntries(GROUPS.map((g) => [g, []]));
 const detailUsers = new Map();     // Poly Haven texture name -> [{mat, tile, rot, nstr}]
 const glassMats = [];
@@ -347,6 +351,7 @@ function patchStd(m, g) {
   const u = m.userData;
   u.uDetK = { value: 0 };
   u.uSpecOcc = { value: 1 };
+  u.uRoll = { value: INTERIOR.has(g) ? 1 : 0 };        // indoors: soft highlight roll-off (the lift would clip lamps to flat white)
   const probe = PROBES[ZONE_PROBE[g]];
   if (probe && probe.box) {
     m.defines = { BOX_PROJ: '' };
@@ -355,7 +360,7 @@ function patchStd(m, g) {
     u.uProbePos = { value: B(...probe.p) };
   }
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, { uDetK: u.uDetK, uSpecOcc: u.uSpecOcc });
+    Object.assign(sh.uniforms, { uDetK: u.uDetK, uSpecOcc: u.uSpecOcc, uRoll: u.uRoll });
     if (u.uBoxMin) Object.assign(sh.uniforms, { uBoxMin: u.uBoxMin, uBoxMax: u.uBoxMax, uProbePos: u.uProbePos });
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
@@ -373,11 +378,13 @@ function patchStd(m, g) {
         reflectVec = boxProject( reflectVec );
       #endif`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform float uDetK;\nuniform float uSpecOcc;\n' + BOX_PROJ_PARS)
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform float uDetK;\nuniform float uSpecOcc;\nuniform float uRoll;\n' + BOX_PROJ_PARS)
       .replace('#include <envmap_physical_pars_fragment>', envPars)
       .replace('#include <normal_fragment_maps>', 'float detailB = 0.5;\n' + nmaps)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance *= 1.0 + ( detailB - 0.5 ) * 2.0 * uDetK;`)
+        totalEmissiveRadiance *= 1.0 + ( detailB - 0.5 ) * 2.0 * uDetK;
+        float lmPk = max( max( totalEmissiveRadiance.r, totalEmissiveRadiance.g ), totalEmissiveRadiance.b );
+        if ( uRoll > 0.5 && lmPk > 0.7 ) totalEmissiveRadiance *= ( 0.7 + 0.3 * ( 1.0 - exp( ( 0.7 - lmPk ) / 0.3 ) ) ) / lmPk;`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         float lmL = dot( totalEmissiveRadiance, vec3( 0.2126, 0.7152, 0.0722 ) ) / max( emissive.r, 0.05 );
         reflectedLight.indirectSpecular *= mix( 1.0, 0.2 + 0.8 * smoothstep( 0.0, 0.2, lmL ), uSpecOcc );`);
@@ -415,7 +422,10 @@ function webMaterial(name) {
   m.userData.group = g;
   m.userData.srcName = name;
   patchStd(m, g);
-  m.userData.uSpecOcc.value = rough > 0.15 ? 1.0 : 0.35;
+  // specular occlusion dims reflections where the lightmap is dark. Metal is dark in a lightmap by nature (it has
+  // no diffuse colour), so it must not be occluded, or the hood, sink and taps lose their reflections and look black.
+  m.userData.floorTile = INTERIOR.has(g) && Math.abs(rough - 0.07) < 0.005;
+  m.userData.uSpecOcc.value = metal > 0 ? 0.0 : m.userData.floorTile ? 0.1 : rough > 0.15 ? 1.0 : 0.35;
   if (kv.d) {
     const [tex, tile, rot, nstr, vr] = kv.d.split(',');
     const e = { mat: m, tile: parseFloat(tile), rot: parseFloat(rot) || 0, nstr: parseFloat(nstr), var: parseFloat(vr) };
@@ -457,7 +467,6 @@ const GF_BLOCK = [
   rect(-1.55, -0.25, 6.0, 7.65), rect(-2.75, -1.95, 7.10, 7.65),         // dining set, airer
   rect(2.33, 2.95, 3.75, 7.65), rect(2.28, 2.95, 0.40, 1.10), rect(2.55, 2.90, 1.13, 1.47),  // kitchen, fridge, bin
   rect(-2.95, -2.40, 0.35, 4.22), rect(-1.56, -1.45, 0.93, 4.22), rect(-2.95, -1.45, 4.12, 4.22),  // stair walls
-  rect(1.40, 2.10, 6.88, 7.65),                                             // potted plant
 ];
 const BATH_BLOCK = [rect(-4.92, -4.48, 4.55, 5.25), rect(-3.92, -3.55, 4.55, 4.93), rect(-3.80, -3.30, 6.12, 6.78)];
 const BATH_SEGS = [[-5.30, 6.85, -4.50, 6.85], [-3.27, 5.12, -4.03, 5.05]];
@@ -1028,12 +1037,14 @@ addEventListener('resize', () => { mapDirty = true; });
 let adapt = 0;   // 0 = eyes adjusted to outdoors, 1 = indoors
 const white = new THREE.Color(1, 1, 1);
 function applyAdaptation() {
-  const extK = 1 + 0.45 * adapt, intK = 0.62 + 0.38 * adapt;
+  const lift = 1 + (INT_GAIN - 1) * adapt;             // indoors everything is exposed brighter, views out included
+  const extK = (1 + 0.45 * adapt) * lift, intK = (0.62 + 0.38 * adapt) * lift;
   for (const g of GROUPS) {
     const k = INTERIOR.has(g) ? intK : extK;
-    for (const m of groupMats[g]) if (m.emissiveMap) { m.emissiveIntensity = k; m.envMapIntensity = k; }
+    for (const m of groupMats[g]) if (m.emissiveMap) { m.emissiveIntensity = k; m.envMapIntensity = k * (m.userData.floorTile ? FLOOR_REFL : 1); }
   }
   for (const m of treeMats) m.color.setScalar(extK);
+  if (bloomPass) bloomPass.threshold = 0.88 * lift;   // the lift brightens rooms, not the glow round lamps and windows
   if (farGround) farGround.material.color.copy(lawnColor).multiplyScalar(extK);
   scene.backgroundIntensity = extK;
   if (scene.fog) scene.fog.color.copy(fogBase).multiplyScalar(extK);
@@ -1095,7 +1106,11 @@ async function start() {
 
   // textures: outside first, then the ground floor, then the rest
   const setGroupTex = (g, t) => {
-    for (const m of groupMats[g]) { m.emissiveMap = t; m.emissive.setScalar(1); m.needsUpdate = true; }
+    for (const m of groupMats[g]) {
+      m.emissiveMap = t;
+      if (INTERIOR.has(g)) m.emissive.setRGB(INT_WB[0], INT_WB[1], INT_WB[2]); else m.emissive.setScalar(1);
+      m.needsUpdate = true;
+    }
     dirty = 5;
   };
   const panoP = loadTex(`../assets/tex/pano_${Q}.webp${VER}`, { flip: true }).then((t) => {
