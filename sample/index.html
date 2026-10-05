@@ -224,7 +224,7 @@ const COARSE = matchMedia('(pointer: coarse)').matches;
 if (COARSE) document.documentElement.classList.add('touch');
 const MOBILE = COARSE || Math.min(screen.width, screen.height) < 700;
 const Q = MOBILE ? 'lo' : 'hi';
-const VER = '?v=6.2';           // bump on every republish so browsers never mix old and new assets
+const VER = '?v=6.3';           // bump on every republish so browsers never mix old and new assets
 const $ = (s) => document.querySelector(s);
 const statusEl = $('#status'), barEl = $('#bar i');
 
