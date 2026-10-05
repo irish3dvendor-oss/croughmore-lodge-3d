@@ -224,7 +224,7 @@ const COARSE = matchMedia('(pointer: coarse)').matches;
 if (COARSE) document.documentElement.classList.add('touch');
 const MOBILE = COARSE || Math.min(screen.width, screen.height) < 700;
 const Q = MOBILE ? 'lo' : 'hi';
-const VER = '?v=5.2';           // bump on every republish so browsers never mix old and new assets
+const VER = '?v=6.2';           // bump on every republish so browsers never mix old and new assets
 const $ = (s) => document.querySelector(s);
 const statusEl = $('#status'), barEl = $('#bar i');
 
@@ -1329,7 +1329,7 @@ function step(dt) {
   if (stick && stick.ax !== undefined) { fx += stick.ax; fy -= stick.ay; }
   const mag = Math.min(1, Math.hypot(fx, fy));
   // brisk walking pace; Shift (or the stick pushed to its edge on a phone) to hurry
-  const speed = (keys.has('shift') || (stick && mag > 0.93)) ? 3.8 : 2.5;
+  const speed = (keys.has('shift') || (stick && mag > 0.93)) ? 5.5 : 3.5;     // 2.5 felt slow (Tig na Mara review, 5 Oct)
   let dvx = 0, dvy = 0;
   if (mag > 0.05) {
     const cy = Math.cos(P.yaw), sy = Math.sin(P.yaw), n = Math.hypot(fx, fy) || 1;
@@ -1345,7 +1345,7 @@ function step(dt) {
         route = null; mapTarget = null; mapDirty = true;
       } else route.i++;
     } else {
-      const v = Math.min(3.2, last ? Math.max(0.45, d * 2.4) : 3.2);
+      const v = Math.min(4.5, last ? Math.max(0.45, d * 2.4) : 4.5);
       dvx = dx / d * v; dvy = dy / d * v;
       if (route.turn && (!route.endLook || !last || d > 1.2)) {
         const want = Math.atan2(dy, dx);
